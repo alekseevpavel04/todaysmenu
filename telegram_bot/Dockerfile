@@ -1,23 +1,17 @@
-# Use the official Ubuntu image from the Docker Hub
-FROM ubuntu:24.04
+# Use a more lightweight Python image instead of full Ubuntu
+FROM python:3.9-slim
 
-# Install system packages
-RUN apt-get update \
-    && apt-get install -y python3-pip libgomp1 \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set the working directory in the container
+# Set working directory
 WORKDIR /app
 
-# Copy the requirements file into the container at /app
+# Copy requirements first to leverage Docker caching
 COPY requirements.txt .
 
-# Install required Python dependencies
-RUN pip3 install --no-cache-dir -r requirements.txt --break-system-packages
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the current directory contents into the container at /app
+# Copy the application code
 COPY . .
 
-# Command to run the Telegram application
-CMD ["python3", "bot.py"]
+# Command to run the Telegram bot
+CMD ["python", "bot.py"]
