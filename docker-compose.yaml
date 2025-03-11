@@ -4,8 +4,11 @@ services:
   telegram_bot:
     build:
       context: ./telegram_bot
+    ports:
+      - "8443:8000"
     depends_on:
-      - fastapi_app
+      fastapi_app:
+        condition: service_healthy
     environment:
       - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
     restart: always
@@ -18,16 +21,14 @@ services:
   fastapi_app:
     build:
       context: ./fastapi_app
-    expose:
-      - 8000
-    # If using GPU, uncomment the following lines
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
     restart: always
     networks:
       - recipe_network
