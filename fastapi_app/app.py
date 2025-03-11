@@ -40,12 +40,27 @@ async def lifespan(app: FastAPI):
     # Declare global variables first
     global model, tokenizer
 
+    # Path to check if model is already loaded
+    cache_path = os.path.expanduser("~/.cache/huggingface")
+    model_name = "Qwen/Qwen2.5-7B-Instruct"
+    model_cache_dir = os.path.join(cache_path, "models--" + model_name.replace("/", "--"))
+
+    logger.info(f"Checking for cached model at: {model_cache_dir}")
+    model_already_cached = os.path.exists(model_cache_dir) and os.path.isdir(model_cache_dir)
+
+    if model_already_cached:
+        logger.info("✓ Model found in cache, using cached version")
+    else:
+        logger.info("Model not found in cache, will download it")
+
     logger.info("==== Starting model loading ====")
-    model_name = "Qwen/Qwen2.5-1.5B-Instruct"
 
     try:
         logger.info(f"Loading tokenizer {model_name}...")
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_name,
+            cache_dir=cache_path
+        )
         logger.info(f"Tokenizer successfully loaded")
 
         logger.info(f"Loading model {model_name}...")
@@ -54,7 +69,8 @@ async def lifespan(app: FastAPI):
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
             torch_dtype="auto",  # automatically selects the appropriate type
-            device_map="auto"  # automatically places on available devices
+            device_map="auto",  # automatically places on available devices
+            cache_dir=cache_path
         )
         logger.info(f"✓ Model {model_name} successfully loaded")
         logger.info(f"✓ Device used: {model.device}")
@@ -99,6 +115,7 @@ HEADERS = {
 # Function to use LLM to optimize search query
 async def optimize_search_query(query: str) -> str:
     global model, tokenizer
+    cache_path = os.path.expanduser("~/.cache/huggingface")
 
     if model is None or tokenizer is None:
         logger.warning("Model not loaded for query optimization, using fallback cleaning")
@@ -363,19 +380,43 @@ async def generate_recipe_analysis(recipe: Dict, query: str, max_length: int = 2
         )
     }
 
-    # Include complete recipe details for better analysis
-    ingredients_text = "\n".join([f"• {ing}" for ing in recipe['ingredients']])
-    steps_text = "\n".join(recipe['preparation_steps'])
+    # Fetch the full HTML content for context
+    try:
+        logger.info(f"Fetching full page content from: {recipe['source_url']}")
+        full_response = requests.get(recipe['source_url'], headers=HEADERS, timeout=15)
+        full_response.raise_for_status()
 
-    # Create user message with the complete recipe details
+        # Parse the HTML content
+        full_soup = BeautifulSoup(full_response.text, 'html.parser')
+
+        # Extract the main content text (remove scripts, styles, etc.)
+        for script in full_soup(["script", "style", "meta", "noscript", "header", "footer", "nav"]):
+            script.extract()
+
+        # Get the entire text content
+        full_text = full_soup.get_text(separator=' ', strip=True)
+
+        # Clean up the text (remove excessive whitespace)
+        full_text = re.sub(r'\s+', ' ', full_text).strip()
+
+        # Truncate if it's too long (to prevent token limits)
+        if len(full_text) > 15000:
+            full_text = full_text[:15000] + "..."
+
+        logger.info(f"Successfully extracted full page context ({len(full_text)} characters)")
+    except Exception as e:
+        logger.warning(f"Failed to get full page content: {str(e)}. Using structured data only.")
+        # Fall back to structured data if the full page fetch fails
+        ingredients_text = "\n".join([f"• {ing}" for ing in recipe['ingredients']])
+        steps_text = "\n".join(recipe['preparation_steps'])
+        full_text = f"Title: {recipe['title']}\n\nCooking time: {recipe['cooking_time']}\n\nIngredients:\n{ingredients_text}\n\nPreparation Steps:\n{steps_text}"
+
+    # Create user message with the complete recipe context
     user_message = {
         "role": "user",
         "content": (
-            f"Here's a recipe for {query} that I'd like you to briefly comment on:\n\n"
-            f"Title: {recipe['title']}\n\n"
-            f"Cooking time: {recipe['cooking_time']}\n\n"
-            f"Ingredients:\n{ingredients_text}\n\n"
-            f"Preparation Steps:\n{steps_text}\n\n"
+            f"Here's a recipe for {query} that I'd like you to briefly comment on. I'm providing the full webpage context below:\n\n"
+            f"{full_text}\n\n"
             f"Please provide 1-2 sentences about what makes this recipe interesting or unique."
         )
     }

@@ -34,6 +34,7 @@ services:
       - recipe_network
     volumes:
       - ./fastapi_app:/app
+      - huggingface_cache:/root/.cache/huggingface
     container_name: recipe_fastapi_app
     deploy:
       resources:
@@ -46,3 +47,7 @@ services:
 networks:
   recipe_network:
     driver: bridge
+
+volumes:
+  huggingface_cache:
+    driver: local
