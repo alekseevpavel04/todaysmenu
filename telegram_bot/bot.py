@@ -202,7 +202,7 @@ async def process_recipe_request(message: types.Message, state: FSMContext):
 async def unknown_message(message: types.Message):
     await message.reply(
         "I only understand text messages with recipe queries. "
-        "Please write what dish you would like to cook."
+        "Please write /start to begin."
     )
 
 

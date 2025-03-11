@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
 
     # Path to check if model is already loaded
     cache_path = os.path.expanduser("~/.cache/huggingface")
-    model_name = "Qwen/Qwen2.5-7B-Instruct"
+    model_name = "Qwen/Qwen2.5-1.5B-Instruct"
     model_cache_dir = os.path.join(cache_path, "models--" + model_name.replace("/", "--"))
 
     logger.info(f"Checking for cached model at: {model_cache_dir}")
@@ -117,11 +117,6 @@ async def optimize_search_query(query: str) -> str:
     global model, tokenizer
     cache_path = os.path.expanduser("~/.cache/huggingface")
 
-    if model is None or tokenizer is None:
-        logger.warning("Model not loaded for query optimization, using fallback cleaning")
-        # Fallback to simple cleaning if model is not available
-        return clean_search_query(query)
-
     logger.info(f"Using LLM to optimize query: {query}")
 
     # Create system message with clearer instructions and more emphasis
@@ -167,7 +162,7 @@ async def optimize_search_query(query: str) -> str:
         **model_inputs,
         max_new_tokens=15,  # Shorter response limit
         temperature=0.1,  # Much lower temperature for more deterministic response
-        do_sample=False,  # Turn off sampling for more deterministic output
+        do_sample=True,  # Turn off sampling for more deterministic output
         top_p=0.95,
         repetition_penalty=1.2  # Discourage repetition
     )
@@ -193,27 +188,8 @@ async def optimize_search_query(query: str) -> str:
     # Ensure the query is clean and simple
     optimized_query = re.sub(r'\s+', ' ', optimized_query).strip()
 
-    # Final verification - if the optimized query is longer than the original,
-    # it might have added unwanted terms, so use the fallback instead
-    if len(optimized_query.split()) > len(query.split()) + 1:
-        logger.warning(f"Optimized query too verbose, using fallback: '{optimized_query}'")
-        optimized_query = clean_search_query(query)
-
     logger.info(f"LLM optimized query: '{query}' -> '{optimized_query}'")
     return optimized_query
-
-
-# Function to clean and optimize search query (fallback if LLM not available)
-def clean_search_query(query: str) -> str:
-    # Remove "how to cook", "recipe for", etc.
-    cleaned_query = re.sub(r'how to (make|cook|prepare)|recipe for|how do i make', '', query, flags=re.IGNORECASE)
-    # Remove question marks
-    cleaned_query = cleaned_query.replace('?', '')
-    # Remove extra spaces and strip
-    cleaned_query = re.sub(r'\s+', ' ', cleaned_query).strip()
-
-    logger.info(f"Fallback cleaned query: '{query}' -> '{cleaned_query}'")
-    return cleaned_query
 
 
 # Function to search AllRecipes and get multiple recipes
@@ -293,7 +269,7 @@ async def search_multiple_recipes(query: str, max_recipes: int = 3) -> List[Dict
         return []
 
 
-# Function to extract detailed recipe information
+# Optimized function to extract detailed recipe information - only retrieving what's actually used
 async def extract_recipe_details(recipe_link: str) -> Dict:
     try:
         logger.info(f"Fetching recipe from: {recipe_link}")
@@ -306,42 +282,9 @@ async def extract_recipe_details(recipe_link: str) -> Dict:
         title_element = recipe_soup.find('h1', class_='article-heading')
         title = title_element.text.strip() if title_element else "Unknown Recipe"
 
-        # Extract ingredients
-        ingredients = []
-        ingredients_section = recipe_soup.find('div', {'id': 'mntl-structured-ingredients_1-0'})
-        if ingredients_section:
-            for item in ingredients_section.find_all('li', class_='mntl-structured-ingredients__list-item'):
-                ingredients.append(item.text.strip())
-
-        # Extract preparation steps
-        preparation = []
-        steps_section = recipe_soup.find('div', {'id': re.compile(r'mntl-sc-block_\d+-0')})
-        if steps_section:
-            step_idx = 1
-            for step in steps_section.find_all('p', class_='comp mntl-sc-block'):
-                step_text = step.text.strip()
-                if step_text:  # Only add non-empty steps
-                    preparation.append(f"{step_idx}. {step_text}")
-                    step_idx += 1
-
-        # Extract timing information
-        cooking_time = "Not specified"
-        timing_section = recipe_soup.find('div', class_='mntl-recipe-details__content')
-        if timing_section:
-            time_elements = timing_section.find_all('div', class_='mntl-recipe-details__item')
-            for element in time_elements:
-                label = element.find('div', class_='mntl-recipe-details__label')
-                value = element.find('div', class_='mntl-recipe-details__value')
-                if label and value and (
-                        'time' in label.text.lower() or 'total' in label.text.lower() or 'cook' in label.text.lower()):
-                    cooking_time = f"{label.text.strip()}: {value.text.strip()}"
-                    break  # Use the first time-related information
-
+        # Return only the essential information that's actually used
         return {
             "title": title,
-            "ingredients": ingredients,
-            "preparation_steps": preparation,
-            "cooking_time": cooking_time,
             "source_url": recipe_link
         }
 
@@ -349,9 +292,6 @@ async def extract_recipe_details(recipe_link: str) -> Dict:
         logger.error(f"Error fetching recipe details from {recipe_link}: {str(e)}")
         return {
             "title": "Error fetching recipe",
-            "ingredients": [],
-            "preparation_steps": [],
-            "cooking_time": "Unknown",
             "source_url": recipe_link
         }
 
@@ -406,10 +346,8 @@ async def generate_recipe_analysis(recipe: Dict, query: str, max_length: int = 2
         logger.info(f"Successfully extracted full page context ({len(full_text)} characters)")
     except Exception as e:
         logger.warning(f"Failed to get full page content: {str(e)}. Using structured data only.")
-        # Fall back to structured data if the full page fetch fails
-        ingredients_text = "\n".join([f"• {ing}" for ing in recipe['ingredients']])
-        steps_text = "\n".join(recipe['preparation_steps'])
-        full_text = f"Title: {recipe['title']}\n\nCooking time: {recipe['cooking_time']}\n\nIngredients:\n{ingredients_text}\n\nPreparation Steps:\n{steps_text}"
+        # Fall back to simplified data if the full page fetch fails
+        full_text = f"Title: {recipe['title']}"
 
     # Create user message with the complete recipe context
     user_message = {
@@ -478,7 +416,7 @@ async def recipe_stream_generator(recipe_request: RecipeRequest):
 
         # For each recipe, fetch details and generate analysis
         for recipe in recipes:
-            # Get detailed recipe info
+            # Get detailed recipe info (now using optimized function)
             detailed_recipe = await extract_recipe_details(recipe['link'])
 
             # Generate analysis for this recipe
