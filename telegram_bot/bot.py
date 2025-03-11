@@ -125,7 +125,6 @@ async def process_recipe_request(message: types.Message, state: FSMContext):
         if response.status_code == 200:
             # Process the streaming response
             recipe_count = 0
-            comparison_sent = False
 
             for line in response.iter_lines():
                 if not line:
@@ -146,23 +145,6 @@ async def process_recipe_request(message: types.Message, state: FSMContext):
                         # Show typing indicator for next action
                         await bot.send_chat_action(message.chat.id, 'typing')
 
-                    elif data.get("type") == "comparison":
-                        # Wait a moment before sending the comparison
-                        await asyncio.sleep(1)
-                        # Send comparison text
-                        content = data["content"]
-
-                        # Split if the comparison is too long
-                        if len(content) > 4000:
-                            parts = [content[i:i + 4000] for i in range(0, len(content), 4000)]
-                            for i, part in enumerate(parts):
-                                await message.reply(f"Part {i + 1}/{len(parts)}:\n\n{part}",
-                                                    parse_mode=ParseMode.MARKDOWN)
-                        else:
-                            await message.reply(content, parse_mode=ParseMode.MARKDOWN)
-
-                        comparison_sent = True
-
                 except json.JSONDecodeError as e:
                     logger.error(f"JSON decode error in streaming response: {e}")
                     continue
@@ -171,7 +153,7 @@ async def process_recipe_request(message: types.Message, state: FSMContext):
                     continue
 
             # If we didn't find any recipes
-            if recipe_count == 0 and not comparison_sent:
+            if recipe_count == 0:
                 await message.reply(
                     f"Sorry, I couldn't find any recipes for '{user_query}'. Please try a different query.")
 
