@@ -2,6 +2,7 @@ import os
 import logging
 import requests
 import time
+import json
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ParseMode
 from aiogram.utils import executor
@@ -21,8 +22,8 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 if not TELEGRAM_TOKEN:
     raise ValueError("TELEGRAM_TOKEN not found in environment variables")
 
-# URL for the recipe service API
-FASTAPI_URL = "http://fastapi_app:8000/generate_recipe"
+# URL for the recipe service API - switching to streaming endpoint
+FASTAPI_URL = "http://fastapi_app:8000/stream_recipes"
 HEALTH_CHECK_URL = "http://fastapi_app:8000/health"
 
 
@@ -58,7 +59,7 @@ async def send_welcome(message: types.Message):
         "👨‍🍳 Welcome to the culinary bot!\n\n"
         "I can help you cook different dishes. "
         "Just write what you would like to cook, "
-        "and I will provide you with a detailed recipe.\n\n"
+        "and I will provide you with recipes and compare them.\n\n"
         "For example: 'How to cook carbonara?' or 'Tiramisu recipe'"
     )
     await RecipeStates.waiting_for_query.set()
@@ -70,7 +71,7 @@ async def send_help(message: types.Message):
     await message.reply(
         "🔍 How to use the bot:\n\n"
         "1. Simply write the dish name or a cooking query\n"
-        "2. Wait for the response with the recipe\n"
+        "2. Wait while I find recipes and compare them\n"
         "3. Enjoy the cooking process!\n\n"
         "Example queries:\n"
         "• How to cook borsch?\n"
@@ -107,35 +108,73 @@ async def process_recipe_request(message: types.Message, state: FSMContext):
     await bot.send_chat_action(message.chat.id, 'typing')
 
     # Send message about processing start
-    processing_msg = await message.reply("🔍 Searching for recipe... This may take a few seconds.")
+    processing_msg = await message.reply("🔍 Searching for recipes... This may take a few seconds.")
 
     try:
-        # Make a request to the API with increased timeout
+        # Make a streaming request to the API
         response = requests.post(
             FASTAPI_URL,
             json={"query": user_query, "max_length": 2048, "temperature": 0.7},
-            timeout=120  # Increase timeout to 2 minutes for generation
+            stream=True,
+            timeout=180  # Increased timeout for streaming response
         )
 
+        # Delete the processing message once we start getting results
+        await bot.delete_message(chat_id=processing_msg.chat.id, message_id=processing_msg.message_id)
+
         if response.status_code == 200:
-            result = response.json()
-            recipe_text = result.get("recipe", "Unfortunately, I couldn't generate the recipe.")
+            # Process the streaming response
+            recipe_count = 0
+            comparison_sent = False
 
-            # Split long text into parts if necessary
-            if len(recipe_text) > 4000:
-                # Delete processing message
-                await bot.delete_message(chat_id=processing_msg.chat.id, message_id=processing_msg.message_id)
+            for line in response.iter_lines():
+                if not line:
+                    continue
 
-                # Send message about long recipe
-                await message.reply("📖 The recipe is quite long, sending in parts:")
+                try:
+                    data = json.loads(line.decode('utf-8'))
 
-                parts = [recipe_text[i:i + 4000] for i in range(0, len(recipe_text), 4000)]
-                for i, part in enumerate(parts):
-                    await message.reply(f"Part {i + 1}/{len(parts)}:\n\n{part}", parse_mode=ParseMode.MARKDOWN)
-            else:
-                # Delete processing message
-                await bot.delete_message(chat_id=processing_msg.chat.id, message_id=processing_msg.message_id)
-                await message.reply(recipe_text, parse_mode=ParseMode.MARKDOWN)
+                    # Check for error message
+                    if "error" in data:
+                        await message.reply(data["error"])
+                        break
+
+                    if data.get("type") == "recipe":
+                        # Send each recipe as a separate message
+                        recipe_count += 1
+                        await message.reply(data["content"], parse_mode=ParseMode.MARKDOWN)
+                        # Show typing indicator for next action
+                        await bot.send_chat_action(message.chat.id, 'typing')
+
+                    elif data.get("type") == "comparison":
+                        # Wait a moment before sending the comparison
+                        await asyncio.sleep(1)
+                        # Send comparison text
+                        content = data["content"]
+
+                        # Split if the comparison is too long
+                        if len(content) > 4000:
+                            parts = [content[i:i + 4000] for i in range(0, len(content), 4000)]
+                            for i, part in enumerate(parts):
+                                await message.reply(f"Part {i + 1}/{len(parts)}:\n\n{part}",
+                                                    parse_mode=ParseMode.MARKDOWN)
+                        else:
+                            await message.reply(content, parse_mode=ParseMode.MARKDOWN)
+
+                        comparison_sent = True
+
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON decode error in streaming response: {e}")
+                    continue
+                except Exception as e:
+                    logger.error(f"Error processing streaming response line: {e}")
+                    continue
+
+            # If we didn't find any recipes
+            if recipe_count == 0 and not comparison_sent:
+                await message.reply(
+                    f"Sorry, I couldn't find any recipes for '{user_query}'. Please try a different query.")
+
         elif response.status_code == 503:
             # Special handling for the case when the model is still loading
             logger.warning("API responded with 503 - service is still loading")
@@ -145,7 +184,7 @@ async def process_recipe_request(message: types.Message, state: FSMContext):
             error_text = response.text
             logger.error(f"API Error: {response.status_code} - {error_text}")
             await message.reply(
-                "😞 An error occurred while getting the recipe. Try another query or try again later.")
+                "😞 An error occurred while getting the recipes. Try another query or try again later.")
     except requests.exceptions.Timeout:
         logger.error("Timeout when requesting API")
         await message.reply(
@@ -156,12 +195,6 @@ async def process_recipe_request(message: types.Message, state: FSMContext):
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         await message.reply("😞 An unexpected error occurred. Please try again later.")
-    finally:
-        # Check if the processing message still exists and delete it if yes
-        try:
-            await bot.delete_message(chat_id=processing_msg.chat.id, message_id=processing_msg.message_id)
-        except:
-            pass  # If the message is already deleted, ignore the error
 
 
 # Handler for all other messages
@@ -175,6 +208,8 @@ async def unknown_message(message: types.Message):
 
 # Start the bot with waiting for API readiness
 if __name__ == '__main__':
+    import asyncio
+
     logger.info("Starting Telegram bot...")
 
     # Wait until API is ready
