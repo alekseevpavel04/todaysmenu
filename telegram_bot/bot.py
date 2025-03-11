@@ -9,190 +9,190 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.dispatcher import FSMContext
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 
-# Настройка логирования
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
 )
 logger = logging.getLogger(__name__)
 
-# Получаем токен из переменной окружения
+# Get token from environment variable
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 if not TELEGRAM_TOKEN:
-    raise ValueError("TELEGRAM_TOKEN не найден в переменных окружения")
+    raise ValueError("TELEGRAM_TOKEN not found in environment variables")
 
-# URL для API сервиса с рецептами
+# URL for the recipe service API
 FASTAPI_URL = "http://fastapi_app:8000/generate_recipe"
 HEALTH_CHECK_URL = "http://fastapi_app:8000/health"
 
 
-# Функция для проверки доступности API
+# Function to check API availability
 def is_api_ready():
     try:
         response = requests.get(HEALTH_CHECK_URL, timeout=5)
         data = response.json()
         if data["status"] == "ok":
             return True
-        logger.info(f"API еще не готов: {data}")
+        logger.info(f"API is not ready yet: {data}")
         return False
     except Exception as e:
-        logger.warning(f"Ошибка при проверке готовности API: {e}")
+        logger.warning(f"Error checking API readiness: {e}")
         return False
 
 
-# Инициализация бота и диспетчера
+# Initialize bot and dispatcher
 bot = Bot(token=TELEGRAM_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
 
-# Определение состояний для FSM
+# Define states for FSM
 class RecipeStates(StatesGroup):
     waiting_for_query = State()
 
 
-# Обработчик команды /start
+# Handler for /start command
 @dp.message_handler(commands=['start'], state='*')
 async def send_welcome(message: types.Message):
     await message.reply(
-        "👨‍🍳 Приветствую вас в кулинарном боте!\n\n"
-        "Я могу помочь вам приготовить разные блюда. "
-        "Просто напишите, что вы хотели бы приготовить, "
-        "и я предоставлю вам подробный рецепт.\n\n"
-        "Например: 'Как приготовить карбонару?' или 'Рецепт тирамису'"
+        "👨‍🍳 Welcome to the culinary bot!\n\n"
+        "I can help you cook different dishes. "
+        "Just write what you would like to cook, "
+        "and I will provide you with a detailed recipe.\n\n"
+        "For example: 'How to cook carbonara?' or 'Tiramisu recipe'"
     )
     await RecipeStates.waiting_for_query.set()
 
 
-# Обработчик команды /help
+# Handler for /help command
 @dp.message_handler(commands=['help'], state='*')
 async def send_help(message: types.Message):
     await message.reply(
-        "🔍 Как пользоваться ботом:\n\n"
-        "1. Просто напишите название блюда или запрос о приготовлении\n"
-        "2. Дождитесь ответа с рецептом\n"
-        "3. Наслаждайтесь процессом приготовления!\n\n"
-        "Примеры запросов:\n"
-        "• Как приготовить борщ?\n"
-        "• Рецепт шарлотки с яблоками\n"
-        "• Хочу приготовить пасту карбонара\n"
-        "• Рецепт хлеба в домашних условиях"
+        "🔍 How to use the bot:\n\n"
+        "1. Simply write the dish name or a cooking query\n"
+        "2. Wait for the response with the recipe\n"
+        "3. Enjoy the cooking process!\n\n"
+        "Example queries:\n"
+        "• How to cook borsch?\n"
+        "• Apple charlotte recipe\n"
+        "• I want to cook pasta carbonara\n"
+        "• Homemade bread recipe"
     )
 
 
-# Обработчик команды /status - новая команда для проверки статуса API
+# Handler for /status command - new command to check API status
 @dp.message_handler(commands=['status'], state='*')
 async def check_api_status(message: types.Message):
-    await message.reply("🔄 Проверяю состояние сервиса рецептов...")
+    await message.reply("🔄 Checking recipe service status...")
     if is_api_ready():
-        await message.reply("✅ Сервис рецептов работает нормально и готов к использованию!")
+        await message.reply("✅ Recipe service is working normally and ready to use!")
     else:
-        await message.reply("⚠️ Сервис рецептов сейчас недоступен или загружается. Попробуйте позже.")
+        await message.reply("⚠️ Recipe service is currently unavailable or loading. Try again later.")
 
 
-# Обработчик текстовых сообщений
+# Handler for text messages
 @dp.message_handler(state=RecipeStates.waiting_for_query, content_types=types.ContentTypes.TEXT)
 async def process_recipe_request(message: types.Message, state: FSMContext):
     user_query = message.text
 
-    # Проверяем готовность API перед отправкой запроса
+    # Check API readiness before sending request
     if not is_api_ready():
         await message.reply(
-            "⚠️ Сервис рецептов сейчас загружается или недоступен. "
-            "Пожалуйста, попробуйте через несколько минут."
+            "⚠️ Recipe service is currently loading or unavailable. "
+            "Please try again in a few minutes."
         )
         return
 
-    # Отправка "печатает" статуса
+    # Send "typing" status
     await bot.send_chat_action(message.chat.id, 'typing')
 
-    # Отправляем сообщение о начале обработки
-    processing_msg = await message.reply("🔍 Ищу рецепт... Это может занять несколько секунд.")
+    # Send message about processing start
+    processing_msg = await message.reply("🔍 Searching for recipe... This may take a few seconds.")
 
     try:
-        # Делаем запрос к API с увеличенным таймаутом
+        # Make a request to the API with increased timeout
         response = requests.post(
             FASTAPI_URL,
             json={"query": user_query, "max_length": 2048, "temperature": 0.7},
-            timeout=120  # Увеличиваем таймаут до 2 минут для генерации
+            timeout=120  # Increase timeout to 2 minutes for generation
         )
 
         if response.status_code == 200:
             result = response.json()
-            recipe_text = result.get("recipe", "К сожалению, не удалось сгенерировать рецепт.")
+            recipe_text = result.get("recipe", "Unfortunately, I couldn't generate the recipe.")
 
-            # Разбиваем длинный текст на части, если необходимо
+            # Split long text into parts if necessary
             if len(recipe_text) > 4000:
-                # Удаляем сообщение о обработке
+                # Delete processing message
                 await bot.delete_message(chat_id=processing_msg.chat.id, message_id=processing_msg.message_id)
 
-                # Отправляем сообщение о длинном рецепте
-                await message.reply("📖 Рецепт получился большим, отправляю по частям:")
+                # Send message about long recipe
+                await message.reply("📖 The recipe is quite long, sending in parts:")
 
                 parts = [recipe_text[i:i + 4000] for i in range(0, len(recipe_text), 4000)]
                 for i, part in enumerate(parts):
-                    await message.reply(f"Часть {i + 1}/{len(parts)}:\n\n{part}", parse_mode=ParseMode.MARKDOWN)
+                    await message.reply(f"Part {i + 1}/{len(parts)}:\n\n{part}", parse_mode=ParseMode.MARKDOWN)
             else:
-                # Удаляем сообщение о обработке
+                # Delete processing message
                 await bot.delete_message(chat_id=processing_msg.chat.id, message_id=processing_msg.message_id)
                 await message.reply(recipe_text, parse_mode=ParseMode.MARKDOWN)
         elif response.status_code == 503:
-            # Специальная обработка для случая, когда модель еще загружается
-            logger.warning("API ответило 503 - сервис еще загружается")
+            # Special handling for the case when the model is still loading
+            logger.warning("API responded with 503 - service is still loading")
             await message.reply(
-                "⏳ Языковая модель еще загружается. Пожалуйста, подождите несколько минут и попробуйте снова.")
+                "⏳ The language model is still loading. Please wait a few minutes and try again.")
         else:
             error_text = response.text
-            logger.error(f"Ошибка API: {response.status_code} - {error_text}")
+            logger.error(f"API Error: {response.status_code} - {error_text}")
             await message.reply(
-                "😞 Произошла ошибка при получении рецепта. Попробуйте другой запрос или повторите позже.")
+                "😞 An error occurred while getting the recipe. Try another query or try again later.")
     except requests.exceptions.Timeout:
-        logger.error("Timeout при запросе к API")
+        logger.error("Timeout when requesting API")
         await message.reply(
-            "⏱️ Запрос занимает слишком много времени. Пожалуйста, попробуйте позже или уточните запрос.")
+            "⏱️ The request is taking too long. Please try again later or refine your query.")
     except requests.exceptions.RequestException as e:
-        logger.error(f"Ошибка при запросе к API: {e}")
-        await message.reply("😞 Не удалось связаться с сервисом рецептов. Пожалуйста, попробуйте позже.")
+        logger.error(f"Error when requesting API: {e}")
+        await message.reply("😞 Could not connect to the recipe service. Please try again later.")
     except Exception as e:
-        logger.error(f"Непредвиденная ошибка: {e}")
-        await message.reply("😞 Произошла непредвиденная ошибка. Пожалуйста, попробуйте позже.")
+        logger.error(f"Unexpected error: {e}")
+        await message.reply("😞 An unexpected error occurred. Please try again later.")
     finally:
-        # Проверяем, существует ли еще сообщение о обработке, и удаляем его если да
+        # Check if the processing message still exists and delete it if yes
         try:
             await bot.delete_message(chat_id=processing_msg.chat.id, message_id=processing_msg.message_id)
         except:
-            pass  # Если сообщение уже удалено, игнорируем ошибку
+            pass  # If the message is already deleted, ignore the error
 
 
-# Обработчик всех остальных сообщений
+# Handler for all other messages
 @dp.message_handler(content_types=types.ContentTypes.ANY, state='*')
 async def unknown_message(message: types.Message):
     await message.reply(
-        "Я понимаю только текстовые сообщения с запросами о рецептах. "
-        "Пожалуйста, напишите, какое блюдо вы хотели бы приготовить."
+        "I only understand text messages with recipe queries. "
+        "Please write what dish you would like to cook."
     )
 
 
-# Запуск бота с ожиданием готовности API
+# Start the bot with waiting for API readiness
 if __name__ == '__main__':
-    logger.info("Запуск Telegram бота...")
+    logger.info("Starting Telegram bot...")
 
-    # Ждем, пока API будет готов
+    # Wait until API is ready
     retry_count = 0
-    max_retries = 30  # Максимум 5 минут ожидания (30 * 10 секунд)
-    retry_interval = 10  # 10 секунд между попытками
+    max_retries = 30  # Maximum 5 minutes of waiting (30 * 10 seconds)
+    retry_interval = 10  # 10 seconds between attempts
 
-    logger.info("Проверка доступности API перед запуском бота...")
+    logger.info("Checking API availability before starting the bot...")
     while not is_api_ready() and retry_count < max_retries:
-        logger.info(f"Ожидание готовности FastAPI сервиса... Попытка {retry_count + 1}/{max_retries}")
+        logger.info(f"Waiting for FastAPI service to be ready... Attempt {retry_count + 1}/{max_retries}")
         time.sleep(retry_interval)
         retry_count += 1
 
     if retry_count >= max_retries:
         logger.warning(
-            "Не удалось дождаться готовности FastAPI сервиса после нескольких попыток. Запускаем бота в любом случае.")
+            "Could not wait for FastAPI service to be ready after several attempts. Starting the bot anyway.")
     else:
-        logger.info("✅ FastAPI сервис готов!")
+        logger.info("✅ FastAPI service is ready!")
 
-    # Запускаем бота
+    # Start the bot
     executor.start_polling(dp, skip_updates=True)

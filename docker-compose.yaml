@@ -35,6 +35,13 @@ services:
     volumes:
       - ./fastapi_app:/app
     container_name: recipe_fastapi_app
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1 # alternatively, use `count: all` for all GPUs
+              capabilities: [ gpu ]
 
 networks:
   recipe_network:

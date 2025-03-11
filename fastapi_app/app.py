@@ -3,102 +3,124 @@ import uvicorn
 import logging
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 from contextlib import asynccontextmanager
 
-# Настройка логирования
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
 )
 logger = logging.getLogger(__name__)
 
-# Отключаем предупреждения Python
+# Disable Python warnings
 os.environ["PYTHONWARNINGS"] = "ignore"
 
-# Глобальные переменные для модели и токенизатора
+# Global variables for model and tokenizer
 model = None
 tokenizer = None
 
+logger.info(f"CUDA is available: {torch.cuda.is_available()}")
+logger.info(f"CUDA device count: {torch.cuda.device_count()}")
+if torch.cuda.is_available():
+    logger.info(f"CUDA device name: {torch.cuda.get_device_name(0)}")
 
-# Создаем контекстный менеджер для обработки событий жизненного цикла приложения
+
+# Create a context manager to handle application lifecycle events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Declare global variables first
     global model, tokenizer
 
-    logger.info("==== Начало загрузки модели ====")
-    model_name = "Qwen/Qwen2.5-0.5B"
+    logger.info("==== Starting model loading ====")
+    model_name = "Qwen/Qwen2.5-0.5B-Instruct"
 
     try:
-        logger.info(f"Загрузка токенизатора {model_name}...")
+        logger.info(f"Loading tokenizer {model_name}...")
         tokenizer = AutoTokenizer.from_pretrained(model_name)
-        logger.info(f"Токенизатор успешно загружен")
+        logger.info(f"Tokenizer successfully loaded")
 
-        logger.info(f"Загрузка модели {model_name}...")
+        logger.info(f"Loading model {model_name}...")
+
+        # Load the model with correct parameters
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            torch_dtype=torch.float16,
-            device_map="auto",
-            low_cpu_mem_usage=True
+            torch_dtype="auto",  # automatically selects the appropriate type
+            device_map="auto"  # automatically places on available devices
         )
-        logger.info(f"✓ Модель {model_name} успешно загружена")
-        logger.info(f"✓ Используемое устройство: {model.device}")
+        logger.info(f"✓ Model {model_name} successfully loaded")
+        logger.info(f"✓ Device used: {model.device}")
     except Exception as e:
-        logger.error(f"✗ Критическая ошибка при загрузке модели: {str(e)}")
+        logger.error(f"✗ Critical error during model loading: {str(e)}")
         raise
 
-    logger.info("==== Загрузка модели завершена ====")
+    logger.info("==== Model loading completed ====")
 
-    yield  # Здесь приложение работает
+    yield  # Here the application runs
 
-    # Код, выполняемый при завершении приложения
-    logger.info("Завершение работы приложения, освобождение ресурсов...")
-    # Здесь не нужно повторно объявлять global, так как вы уже это сделали выше
+    # Code executed when the application is shutting down
+    logger.info("Terminating the application, freeing resources...")
+    # No need to redeclare global here, as you already did above
     del model
     del tokenizer
     torch.cuda.empty_cache()
 
 
-# Инициализация FastAPI приложения с менеджером жизненного цикла
+# Initialize FastAPI application with lifecycle manager
 app = FastAPI(
-    title="Кулинарный помощник",
-    description="API для генерации рецептов",
+    title="Culinary Assistant",
+    description="API for recipe generation",
     lifespan=lifespan
 )
 
 
-# Определяем модель запроса
+# Define the request model
 class RecipeRequest(BaseModel):
     query: str
     max_length: Optional[int] = 1024
     temperature: Optional[float] = 0.7
 
 
-# Определяем модель ответа
+# Define the response model
 class RecipeResponse(BaseModel):
     recipe: str
 
 
-# Промпт для роли повара
-def create_chef_prompt(query):
-    return f"""Ты - опытный шеф-повар с многолетним стажем. Твоя задача - помогать людям готовить вкусные блюда, предоставляя подробные рецепты.
+# Function to create messages in the format expected by Qwen
+def create_chef_messages(query: str) -> List[Dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": "You are a professional chef who specializes in culinary arts and recipes. "
+                       "You provide detailed recipes with precise ingredient proportions and preparation steps."
+                       "You speak only English."
+        },
+        {
+            "role": "user",
+            "content": f"I want to cook {query}. Please give me a detailed recipe."
+        },
+        {
+            "role": "assistant",
+            "content": f"I'm happy to help you with a recipe for {query}!"
+        },
+        {
+            "role": "user",
+            "content": f"Write me a recipe for {query} in the following format:\n\n"
+                       f"# Recipe: {query}\n\n"
+                       f"## Ingredients:\n"
+                       f"[list of ingredients with exact proportions]\n\n"
+                       f"## Preparation:\n"
+                       f"[numbered preparation steps]\n\n"
+                       f"## Cooking time:\n"
+                       f"## Serving and storage tips:\n"
+                       f"[useful tips]"
+        }
+    ]
 
-Пользователь хочет приготовить: {query}
 
-Пожалуйста, предоставь рецепт, который включает:
-1. Список ингредиентов с точными пропорциями
-2. Подробные шаги приготовления
-3. Примерное время приготовления
-4. Советы по подаче и хранению блюда
-
-Рецепт:
-"""
-
-
-# Эндпоинт для генерации рецепта
+# Endpoint for recipe generation
 @app.post("/generate_recipe", response_model=RecipeResponse)
 async def generate_recipe(request: RecipeRequest):
     global model, tokenizer
@@ -106,48 +128,63 @@ async def generate_recipe(request: RecipeRequest):
     if model is None or tokenizer is None:
         raise HTTPException(
             status_code=503,
-            detail="Модель еще не загружена. Пожалуйста, попробуйте позже."
+            detail="The model is not yet loaded. Please try again later."
         )
 
     try:
-        logger.info(f"Получен запрос на генерацию рецепта: {request.query}")
-        prompt = create_chef_prompt(request.query)
+        logger.info(f"Received request for recipe generation: {request.query}")
 
-        # When tokenizing input
-        inputs = tokenizer(prompt, return_tensors="pt", padding=True, return_attention_mask=True).to(model.device)
-        logger.info(f"Начинаю генерацию текста...")
+        # Create messages in the format expected by Qwen
+        messages = create_chef_messages(request.query)
 
-        outputs = model.generate(
-            inputs.input_ids,
-            attention_mask=inputs.attention_mask,
+        # Apply chat_template to messages
+        text = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+
+        logger.info("Chat template successfully applied")
+
+        # Tokenize the text
+        model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
+        logger.info(f"Starting text generation...")
+
+        # Generate response
+        generated_ids = model.generate(
+            **model_inputs,
             max_new_tokens=request.max_length,
             temperature=request.temperature,
             do_sample=True,
-            top_p=0.9,
-            pad_token_id=tokenizer.eos_token_id
+            top_p=0.9
         )
 
-        recipe_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        # Убираем промпт из ответа
-        recipe_text = recipe_text.replace(prompt, "").strip()
+        # Extract only the generated tokens (without input tokens)
+        generated_ids = [
+            output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
+        ]
 
-        logger.info(f"Рецепт успешно сгенерирован (длина: {len(recipe_text)} символов)")
+        # Decode the response
+        recipe_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+
+        logger.info(f"Recipe successfully generated (length: {len(recipe_text)} characters)")
         return RecipeResponse(recipe=recipe_text)
+
     except Exception as e:
-        logger.error(f"Ошибка при генерации рецепта: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка при генерации рецепта: {str(e)}")
+        logger.error(f"Error during recipe generation: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error during recipe generation: {str(e)}")
 
 
-# Проверка состояния сервиса
+# Service health check
 @app.get("/health")
 async def health_check():
     if model is None or tokenizer is None:
-        logger.warning("Запрос к /health, но модель еще не загружена!")
+        logger.warning("Request to /health, but the model is not yet loaded!")
         return {"status": "loading", "message": "Model is still loading"}
     return {"status": "ok", "message": "Service is fully operational"}
 
 
-# Запуск сервера
+# Start the server
 if __name__ == "__main__":
-    logger.info("Запуск сервера FastAPI...")
+    logger.info("Starting FastAPI server...")
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -1,5 +1,5 @@
 # Start with CUDA supported Python image
-FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
+FROM pytorch/pytorch:2.6.0-cuda12.6-cudnn9-runtime
 
 # Set environment variable to prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
