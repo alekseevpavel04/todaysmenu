@@ -3,7 +3,7 @@
 The "Today's menu" project is a Telegram bot that leverages Language Models (LLMs) to assist users in selecting recipes from [allrecipes.com](https://www.allrecipes.com) and provides personalized recommendations from the Chef.
 
 ## Project Structure
-
+```
 /
 ├── docker-compose.yml
 ├── .env
@@ -19,29 +19,30 @@ The "Today's menu" project is a Telegram bot that leverages Language Models (LLM
     ├── Dockerfile
     ├── requirements.txt
     └── benchmark.py
+```
 
 ## Installation
 
 1. Clone the repository:
-   `@`@`@bash
+   ```bash
    git clone https://github.com/alekseevpavel04/what-to-cook.git
    cd what-to-cook
-   `@`@`@
+   ```
 
 2. Create a `.env` file with your Telegram token:
-   `@`@`@
+   ```
    TELEGRAM_TOKEN=YOUR_TOKEN
-   `@`@`@
+   ```
 
 3. Build and start the project:
-   `@`@`@bash
+   ```
    docker-compose up --build telegram_bot fastapi_app
-   `@`@`@
+   ```
 
 4. To run benchmarks:
-   `@`@`@bash
+   ```
    docker-compose up --build benchmark
-   `@`@`@
+   ```
 
 
 ## Usage
