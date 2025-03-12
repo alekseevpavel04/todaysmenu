@@ -120,7 +120,7 @@ async def evaluate_chefs_note(recipe_text: str, chefs_note: str, model, tokenize
             "  \"weaknesses\": [\"<weakness1>\", \"<weakness2>\", ...],\n"
             "  \"explanation\": \"<brief explanation of the score>\"\n"
             "}\n\n"
-            "The explanation should be just 1-2 sentences. Include at most 3 strengths and 3 weaknesses."
+            "The explanation should be BRIEF in just 1-2 sentences. Include at most 3 strengths and 3 weaknesses."
         )
     }
 
