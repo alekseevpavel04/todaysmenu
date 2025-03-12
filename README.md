@@ -2,6 +2,10 @@
 
 The "Today's menu" project is a Telegram bot that leverages Language Models (LLMs) to assist users in selecting recipes from [allrecipes.com](https://www.allrecipes.com) and provides personalized recommendations from the Chef.
 
+## Example
+![example](https://github.com/user-attachments/assets/77ede96d-399b-49f6-93da-5c5b5f566e46)
+
+
 ## Project Structure
 ```
 /
