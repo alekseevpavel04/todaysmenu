@@ -44,6 +44,27 @@ services:
               count: 1 # alternatively, use `count: all` for all GPUs
               capabilities: [ gpu ]
 
+  benchmark:
+    build:
+      context: ./benchmark
+      dockerfile: Dockerfile
+    depends_on:
+      fastapi_app:
+        condition: service_healthy
+    networks:
+      - recipe_network
+    volumes:
+      - ./benchmark:/app
+      - huggingface_cache:/root/.cache/huggingface
+    container_name: recipe_benchmark
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+
 networks:
   recipe_network:
     driver: bridge
