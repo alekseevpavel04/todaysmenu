@@ -3,7 +3,7 @@ import uvicorn
 import logging
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 from contextlib import asynccontextmanager
@@ -43,15 +43,6 @@ async def lifespan(app: FastAPI):
     # Path to check if model is already loaded
     cache_path = os.path.expanduser("~/.cache/huggingface")
     model_name = "Qwen/Qwen2.5-1.5B-Instruct"
-    model_cache_dir = os.path.join(cache_path, "models--" + model_name.replace("/", "--"))
-
-    logger.info(f"Checking for cached model at: {model_cache_dir}")
-    model_already_cached = os.path.exists(model_cache_dir) and os.path.isdir(model_cache_dir)
-
-    if model_already_cached:
-        logger.info("✓ Model found in cache, using cached version")
-    else:
-        logger.info("Model not found in cache, will download it")
 
     logger.info("==== Starting model loading ====")
 
@@ -115,7 +106,6 @@ HEADERS = {
 # Function to use LLM to optimize search query
 async def optimize_search_query(query: str) -> str:
     global model, tokenizer
-    cache_path = os.path.expanduser("~/.cache/huggingface")
 
     logger.info(f"Using LLM to optimize query: {query}")
 

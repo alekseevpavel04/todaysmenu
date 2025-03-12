@@ -206,8 +206,6 @@ async def unknown_message(message: types.Message):
 
 # Start the bot with waiting for API readiness
 if __name__ == '__main__':
-    import asyncio
-
     logger.info("Starting Telegram bot...")
 
     # Wait until API is ready
