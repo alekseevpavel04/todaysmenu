@@ -137,6 +137,7 @@ async def optimize_search_query(query: str) -> str:
             "- 'Recipe for easy chicken tikka masala' → 'chicken tikka masala'\n"
             "- 'Home made spagheti carbonara' → 'spaghetti carbonara'\n"
             "- 'How do I make a classic apple pie?' → 'apple pie'\n"
+            "- 'I want chicken burger' → 'chicken burger'\n"
         )
     }
 

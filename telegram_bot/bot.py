@@ -119,12 +119,10 @@ async def process_recipe_request(message: types.Message, state: FSMContext):
             timeout=180  # Increased timeout for streaming response
         )
 
-        # Delete the processing message once we start getting results
-        await bot.delete_message(chat_id=processing_msg.chat.id, message_id=processing_msg.message_id)
-
         if response.status_code == 200:
             # Process the streaming response
             recipe_count = 0
+            processing_message_deleted = False
 
             for line in response.iter_lines():
                 if not line:
@@ -135,10 +133,21 @@ async def process_recipe_request(message: types.Message, state: FSMContext):
 
                     # Check for error message
                     if "error" in data:
+                        # Delete processing message before showing error
+                        if not processing_message_deleted:
+                            await bot.delete_message(chat_id=processing_msg.chat.id,
+                                                     message_id=processing_msg.message_id)
+                            processing_message_deleted = True
                         await message.reply(data["error"])
                         break
 
                     if data.get("type") == "recipe":
+                        # Delete the processing message before showing the first recipe
+                        if not processing_message_deleted:
+                            await bot.delete_message(chat_id=processing_msg.chat.id,
+                                                     message_id=processing_msg.message_id)
+                            processing_message_deleted = True
+
                         # Send each recipe as a separate message
                         recipe_count += 1
                         await message.reply(data["content"], parse_mode=ParseMode.MARKDOWN)
@@ -152,30 +161,37 @@ async def process_recipe_request(message: types.Message, state: FSMContext):
                     logger.error(f"Error processing streaming response line: {e}")
                     continue
 
-            # If we didn't find any recipes
+            # If we didn't find any recipes, also delete the processing message
             if recipe_count == 0:
+                if not processing_message_deleted:
+                    await bot.delete_message(chat_id=processing_msg.chat.id, message_id=processing_msg.message_id)
                 await message.reply(
                     f"Sorry, I couldn't find any recipes for '{user_query}'. Please try a different query.")
 
         elif response.status_code == 503:
             # Special handling for the case when the model is still loading
             logger.warning("API responded with 503 - service is still loading")
+            await bot.delete_message(chat_id=processing_msg.chat.id, message_id=processing_msg.message_id)
             await message.reply(
                 "⏳ The language model is still loading. Please wait a few minutes and try again.")
         else:
             error_text = response.text
             logger.error(f"API Error: {response.status_code} - {error_text}")
+            await bot.delete_message(chat_id=processing_msg.chat.id, message_id=processing_msg.message_id)
             await message.reply(
                 "😞 An error occurred while getting the recipes. Try another query or try again later.")
     except requests.exceptions.Timeout:
         logger.error("Timeout when requesting API")
+        await bot.delete_message(chat_id=processing_msg.chat.id, message_id=processing_msg.message_id)
         await message.reply(
             "⏱️ The request is taking too long. Please try again later or refine your query.")
     except requests.exceptions.RequestException as e:
         logger.error(f"Error when requesting API: {e}")
+        await bot.delete_message(chat_id=processing_msg.chat.id, message_id=processing_msg.message_id)
         await message.reply("😞 Could not connect to the recipe service. Please try again later.")
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
+        await bot.delete_message(chat_id=processing_msg.chat.id, message_id=processing_msg.message_id)
         await message.reply("😞 An unexpected error occurred. Please try again later.")
 
 
