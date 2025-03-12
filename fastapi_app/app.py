@@ -33,19 +33,13 @@ logger.info(f"CUDA device count: {torch.cuda.device_count()}")
 if torch.cuda.is_available():
     logger.info(f"CUDA device name: {torch.cuda.get_device_name(0)}")
 
-
 # Create a context manager to handle application lifecycle events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Declare global variables first
     global model, tokenizer
-
-    # Path to check if model is already loaded
     cache_path = os.path.expanduser("~/.cache/huggingface")
     model_name = "Qwen/Qwen2.5-1.5B-Instruct"
-
     logger.info("==== Starting model loading ====")
-
     try:
         logger.info(f"Loading tokenizer {model_name}...")
         tokenizer = AutoTokenizer.from_pretrained(
@@ -53,14 +47,11 @@ async def lifespan(app: FastAPI):
             cache_dir=cache_path
         )
         logger.info(f"Tokenizer successfully loaded")
-
         logger.info(f"Loading model {model_name}...")
-
-        # Load the model with correct parameters
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            torch_dtype="auto",  # automatically selects the appropriate type
-            device_map="auto",  # automatically places on available devices
+            torch_dtype="auto",
+            device_map="auto",
             cache_dir=cache_path
         )
         logger.info(f"✓ Model {model_name} successfully loaded")
@@ -68,18 +59,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"✗ Critical error during model loading: {str(e)}")
         raise
-
     logger.info("==== Model loading completed ====")
-
-    yield  # Here the application runs
-
-    # Code executed when the application is shutting down
+    yield
     logger.info("Terminating the application, freeing resources...")
-    # No need to redeclare global here, as you already did above
     del model
     del tokenizer
     torch.cuda.empty_cache()
-
 
 # Initialize FastAPI application with lifecycle manager
 app = FastAPI(
@@ -88,13 +73,11 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-
 # Define the request model
 class RecipeRequest(BaseModel):
     query: str
     max_length: Optional[int] = 1024
     temperature: Optional[float] = 0.7
-
 
 # Headers for web requests to mimic a browser
 HEADERS = {
@@ -102,14 +85,10 @@ HEADERS = {
     'Accept-Language': 'en-US,en;q=0.9',
 }
 
-
 # Function to use LLM to optimize search query
 async def optimize_search_query(query: str) -> str:
     global model, tokenizer
-
     logger.info(f"Using LLM to optimize query: {query}")
-
-    # Create system message with clearer instructions and more emphasis
     system_message = {
         "role": "system",
         "content": (
@@ -130,55 +109,34 @@ async def optimize_search_query(query: str) -> str:
             "- 'I want chicken burger' → 'chicken burger'\n"
         )
     }
-
-    # Create user message with query
     user_message = {
         "role": "user",
         "content": f"Convert this cooking query to optimal search terms: {query}"
     }
-
-    # Apply chat template
     messages = [system_message, user_message]
     text = tokenizer.apply_chat_template(
         messages,
         tokenize=False,
         add_generation_prompt=True
     )
-
-    # Tokenize the text
     model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
-
-    # Generate response with stricter parameters for more deterministic output
     generated_ids = model.generate(
         **model_inputs,
-        max_new_tokens=15,  # Shorter response limit
-        temperature=0.1,  # Much lower temperature for more deterministic response
-        do_sample=True,  # Turn off sampling for more deterministic output
+        max_new_tokens=15,
+        temperature=0.1,
+        do_sample=True,
         top_p=0.95,
-        repetition_penalty=1.2  # Discourage repetition
+        repetition_penalty=1.2
     )
-
-    # Extract only the generated tokens (without input tokens)
     generated_ids = [
         output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
     ]
-
-    # Decode the response
-    optimized_query = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
-
-    # Clean the response further (remove quotes, trim, etc.)
-    optimized_query = optimized_query.strip().strip('"\'').strip()
-
-    # Apply additional post-processing to catch common issues
-    # Remove any added words like "preparation method", "recipe", etc.
+    optimized_query = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0].strip().strip('"\'').strip()
     common_additions = ["preparation", "method", "recipe", "cooking", "instructions", "how to", "how to make"]
     for addition in common_additions:
         optimized_query = re.sub(r'\s+' + addition + r'\s*$', '', optimized_query, flags=re.IGNORECASE)
         optimized_query = re.sub(r'^' + addition + r'\s+', '', optimized_query, flags=re.IGNORECASE)
-
-    # Ensure the query is clean and simple
     optimized_query = re.sub(r'\s+', ' ', optimized_query).strip()
-
     logger.info(f"LLM optimized query: '{query}' -> '{optimized_query}'")
     return optimized_query
 
@@ -186,50 +144,31 @@ async def optimize_search_query(query: str) -> str:
 # Function to search AllRecipes and get multiple recipes
 async def search_multiple_recipes(query: str, max_recipes: int = 3) -> List[Dict]:
     try:
-        # Use LLM to optimize the search query
         cleaned_query = await optimize_search_query(query)
-
         logger.info(f"Searching AllRecipes for: {cleaned_query}, max recipes: {max_recipes}")
-
-        # Step 1: Search for recipes
         search_url = f"https://www.allrecipes.com/search?q={cleaned_query.replace(' ', '+')}"
         search_response = requests.get(search_url, headers=HEADERS, timeout=15)
         search_response.raise_for_status()
-
         search_soup = BeautifulSoup(search_response.text, 'html.parser')
 
-        # Find recipe links
         recipe_links = []
         recipe_titles = []
 
-        # Look for cards with recipes
         for card in search_soup.find_all(['a'], href=True):
             href = card['href']
-
-            # Check if it's a recipe link
             if '/recipe/' in href and not href.endswith('/reviews/') and not href.endswith('/photos/'):
-                # Only add new links (avoid duplicates)
                 if href not in recipe_links:
-                    # Try to find the title
-                    title = None
-
-                    # Try to extract title from the card
                     title_element = card.find('h3', class_='card__title')
                     if title_element:
                         title = title_element.text.strip()
                     else:
-                        # Try other potential ways to get the title
                         title_element = card.find(['h1', 'h2', 'h3', 'h4'])
                         if title_element:
                             title = title_element.text.strip()
-
-                    # If we didn't find a title in the card, we'll fetch it directly
+                        else:
+                            title = None  # Set title to None if not found
                     recipe_links.append(href)
-                    if title:
-                        recipe_titles.append(title)
-                    else:
-                        recipe_titles.append(None)  # We'll fetch this later
-
+                    recipe_titles.append(title)
                     if len(recipe_links) >= max_recipes:
                         break
 
@@ -239,14 +178,11 @@ async def search_multiple_recipes(query: str, max_recipes: int = 3) -> List[Dict
 
         logger.info(f"Found {len(recipe_links)} recipe links")
 
-        # Create recipes with titles - fetch missing titles if needed
         recipes = []
         for i, (link, title) in enumerate(zip(recipe_links, recipe_titles)):
             if title is None:
-                # We need to fetch the title directly from the recipe page
                 recipe_details = await extract_recipe_details(link)
                 title = recipe_details["title"]
-
             recipes.append({
                 "title": title,
                 "link": link,
@@ -259,26 +195,19 @@ async def search_multiple_recipes(query: str, max_recipes: int = 3) -> List[Dict
         logger.error(f"Error during web search: {str(e)}")
         return []
 
-
-# Optimized function to extract detailed recipe information - only retrieving what's actually used
+# Optimized function to extract detailed recipe information
 async def extract_recipe_details(recipe_link: str) -> Dict:
     try:
         logger.info(f"Fetching recipe from: {recipe_link}")
         recipe_response = requests.get(recipe_link, headers=HEADERS, timeout=10)
         recipe_response.raise_for_status()
-
         recipe_soup = BeautifulSoup(recipe_response.text, 'html.parser')
-
-        # Extract recipe title
         title_element = recipe_soup.find('h1', class_='article-heading')
         title = title_element.text.strip() if title_element else "Unknown Recipe"
-
-        # Return only the essential information that's actually used
         return {
             "title": title,
             "source_url": recipe_link
         }
-
     except Exception as e:
         logger.error(f"Error fetching recipe details from {recipe_link}: {str(e)}")
         return {
@@ -286,21 +215,16 @@ async def extract_recipe_details(recipe_link: str) -> Dict:
             "source_url": recipe_link
         }
 
-
 # Function to generate recipe analysis using the model
 async def generate_recipe_analysis(recipe: Dict, query: str, max_length: int = 256,
                                    temperature: float = 0.7) -> str:
     global model, tokenizer
-
     if model is None or tokenizer is None:
         raise HTTPException(
             status_code=503,
             detail="The model is not yet loaded. Please try again later."
         )
-
     logger.info(f"Generating recipe analysis for: {recipe['title']}")
-
-    # Create system message with emphasis on brevity
     system_message = {
         "role": "system",
         "content": (
@@ -310,37 +234,21 @@ async def generate_recipe_analysis(recipe: Dict, query: str, max_length: int = 2
             "it differs from traditional versions. BE EXTREMELY BRIEF - your entire response must not exceed 2 sentences."
         )
     }
-
-    # Fetch the full HTML content for context
     try:
         logger.info(f"Fetching full page content from: {recipe['source_url']}")
         full_response = requests.get(recipe['source_url'], headers=HEADERS, timeout=15)
         full_response.raise_for_status()
-
-        # Parse the HTML content
         full_soup = BeautifulSoup(full_response.text, 'html.parser')
-
-        # Extract the main content text (remove scripts, styles, etc.)
         for script in full_soup(["script", "style", "meta", "noscript", "header", "footer", "nav"]):
             script.extract()
-
-        # Get the entire text content
         full_text = full_soup.get_text(separator=' ', strip=True)
-
-        # Clean up the text (remove excessive whitespace)
         full_text = re.sub(r'\s+', ' ', full_text).strip()
-
-        # Truncate if it's too long (to prevent token limits)
         if len(full_text) > 15000:
             full_text = full_text[:15000] + "..."
-
         logger.info(f"Successfully extracted full page context ({len(full_text)} characters)")
     except Exception as e:
         logger.warning(f"Failed to get full page content: {str(e)}. Using structured data only.")
-        # Fall back to simplified data if the full page fetch fails
         full_text = f"Title: {recipe['title']}"
-
-    # Create user message with the complete recipe context
     user_message = {
         "role": "user",
         "content": (
@@ -349,22 +257,15 @@ async def generate_recipe_analysis(recipe: Dict, query: str, max_length: int = 2
             f"Please provide 1-2 sentences about what makes this recipe interesting or unique."
         )
     }
-
-    # Apply chat template
     messages = [system_message, user_message]
     text = tokenizer.apply_chat_template(
         messages,
         tokenize=False,
         add_generation_prompt=True
     )
-
     logger.info("Chat template for analysis successfully applied")
-
-    # Tokenize the text
     model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
     logger.info(f"Starting recipe analysis text generation...")
-
-    # Generate response with stricter parameters for shorter output
     generated_ids = model.generate(
         **model_inputs,
         max_new_tokens=max_length,
@@ -373,64 +274,41 @@ async def generate_recipe_analysis(recipe: Dict, query: str, max_length: int = 2
         top_p=0.9,
         repetition_penalty=1.2
     )
-
-    # Extract only the generated tokens (without input tokens)
     generated_ids = [
         output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
     ]
-
-    # Decode the response
     analysis_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
-
-    # Ensure the response is brief - truncate if needed
     sentences = re.split(r'(?<=[.!?])\s+', analysis_text.strip())
     if len(sentences) > 2:
         analysis_text = ' '.join(sentences[:2])
-
     logger.info(f"Recipe analysis successfully generated (length: {len(analysis_text)} characters)")
     return analysis_text
-
 
 # Streaming response generator for multiple recipes
 async def recipe_stream_generator(recipe_request: RecipeRequest):
     try:
         query = recipe_request.query
         logger.info(f"Streaming recipes for query: {query}")
-
-        # Find recipes - just get basic info (title and link)
-        # Explicitly set max_recipes to 3 to ensure we don't fetch more than needed
         recipes = await search_multiple_recipes(query, max_recipes=3)
-
         if not recipes:
             yield json.dumps({"error": f"No recipes found for '{query}'"}) + "\n"
             return
-
-        # For each recipe, fetch details and generate analysis
         for recipe in recipes:
-            # Get detailed recipe info (now using optimized function)
             detailed_recipe = await extract_recipe_details(recipe['link'])
-
-            # Generate analysis for this recipe
             recipe_analysis = await generate_recipe_analysis(
                 detailed_recipe,
                 query,
-                max_length=256,  # Shorter length for brief comments
+                max_length=256,
                 temperature=recipe_request.temperature
             )
-
-            # Yield the recipe info and analysis
             yield json.dumps({
                 "type": "recipe",
                 "content": f"# Recipe {recipe['index']}: {detailed_recipe['title']}\n\nLink: {detailed_recipe['source_url']}\n\n**Chef's Note:** {recipe_analysis}"
             }) + "\n"
-
-            # Small delay between messages to ensure proper ordering
             await asyncio.sleep(0.1)
-
     except Exception as e:
         logger.error(f"Error in streaming recipes: {str(e)}")
         yield json.dumps({"error": f"Error processing request: {str(e)}"}) + "\n"
-
 
 # Endpoint for streaming recipes and comparison
 @app.post("/stream_recipes")
@@ -440,7 +318,6 @@ async def stream_recipes(request: RecipeRequest):
         media_type="text/event-stream"
     )
 
-
 # Service health check
 @app.get("/health")
 async def health_check():
@@ -448,7 +325,6 @@ async def health_check():
         logger.warning("Request to /health, but the model is not yet loaded!")
         return {"status": "loading", "message": "Model is still loading"}
     return {"status": "ok", "message": "Service is fully operational"}
-
 
 # Start the server
 if __name__ == "__main__":
