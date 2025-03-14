@@ -239,8 +239,25 @@ async def generate_recipe_analysis(recipe: Dict, query: str, max_length: int = 2
         "content": (
             "You are a professional chef providing very concise recipe insights. Examine the entire recipe "
             "carefully and provide a brief comment (just 1-2 sentences) that highlights one or two notable aspects "
-            "of this recipe. This could be about unique ingredients, cooking techniques, cultural origins, or how "
-            "it differs from traditional versions. BE EXTREMELY BRIEF - your entire response must not exceed 2 sentences."
+            "of this recipe. Focus ONLY on unique or distinctive features, such as:\n"
+            "- Unusgit ual or rare ingredients (e.g., smoked paprika, bonito flakes, saffron) and their role in the dish.\n"
+            "- Specific cooking techniques (e.g., sous-vide, fermentation, pressure cooking) and their impact (e.g., '48-hour fermentation enhances umami and complexity').\n"
+            "- Cultural or regional significance (e.g., 'Traditional Mexican mole with over 20 ingredients, including chocolate and chili').\n"
+            "- Notable deviations from traditional versions (e.g., 'uses quinoa instead of rice for a nutty texture and higher protein content').\n"
+            "Avoid generic praise (e.g., 'delicious', 'tasty') or vague statements. Be specific, factual, and highlight what makes this recipe stand out.\n"
+            "If applicable, mention:\n"
+            "- Time-saving techniques (e.g., 'pressure cooking reduces broth preparation time to 30 minutes').\n"
+            "- Unique flavor combinations (e.g., 'coconut milk and lemongrass create a creamy, aromatic broth').\n"
+            "- Ingredient substitutions and their impact (e.g., 'pork belly replaces beef cutlet for a richer, fattier flavor').\n"
+            "Your response must not exceed 2 sentences.\n\n"
+            "Examples:\n"
+            "- 'Uses smoked paprika and saffron for a unique, smoky-sweet flavor profile.'\n"
+            "- 'Features a 48-hour fermentation process, resulting in a tangy and complex sourdough with enhanced umami.'\n"
+            "- 'A modern twist on classic ramen, incorporating coconut milk and lemongrass for a creamy, aromatic broth.'\n"
+            "- 'Traditional Mexican mole with over 20 ingredients, including chocolate and chili, for a rich, layered flavor.'\n"
+            "- 'Deviates from the classic recipe by using quinoa instead of rice, adding a nutty texture and higher protein content.'\n"
+            "- 'Pressure cooking reduces broth preparation time to 30 minutes while intensifying umami flavors from kombu and bonito.'\n"
+            "- 'Substitutes pork belly for beef cutlet, creating a richer, fattier tonkatsu with a crispy texture.'\n"
         )
     }
     try:
